@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+import hashlib
 
 import streamlit as st
 
@@ -23,6 +24,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             interests TEXT,
             introduction TEXT,
             contact TEXT,
+            owner_key_hash TEXT NOT NULL DEFAULT '',
             photo BLOB,
             photo_mime TEXT,
             created_at TEXT NOT NULL,
@@ -42,6 +44,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    existing_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
+    }
+    if "owner_key_hash" not in existing_columns:
+        conn.execute("ALTER TABLE profiles ADD COLUMN owner_key_hash TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
 def to_text(value: str | None) -> str:
@@ -57,6 +64,7 @@ def save_profile(
     interests: str,
     introduction: str,
     contact: str,
+    owner_key_hash: str | None,
     photo_bytes: bytes | None,
     photo_mime: str | None,
 ) -> None:
@@ -66,8 +74,8 @@ def save_profile(
             """
             INSERT INTO profiles (
                 name, organization, role, interests, introduction, contact,
-                photo, photo_mime, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                owner_key_hash, photo, photo_mime, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -76,6 +84,7 @@ def save_profile(
                 interests,
                 introduction,
                 contact,
+                owner_key_hash or "",
                 photo_bytes,
                 photo_mime,
                 now,
@@ -83,22 +92,28 @@ def save_profile(
             ),
         )
     else:
+        if owner_key_hash:
+            owner_key_update_sql = ", owner_key_hash=?"
+            owner_key_params: tuple[str, ...] = (owner_key_hash,)
+        else:
+            owner_key_update_sql = ""
+            owner_key_params = ()
         if photo_bytes is None:
             conn.execute(
-                """
+                f"""
                 UPDATE profiles
                 SET name=?, organization=?, role=?, interests=?, introduction=?,
-                    contact=?, updated_at=?
+                    contact=?, updated_at=?{owner_key_update_sql}
                 WHERE id=?
                 """,
-                (name, organization, role, interests, introduction, contact, now, profile_id),
+                (name, organization, role, interests, introduction, contact, now, *owner_key_params, profile_id),
             )
         else:
             conn.execute(
-                """
+                f"""
                 UPDATE profiles
                 SET name=?, organization=?, role=?, interests=?, introduction=?,
-                    contact=?, photo=?, photo_mime=?, updated_at=?
+                    contact=?, photo=?, photo_mime=?, updated_at=?{owner_key_update_sql}
                 WHERE id=?
                 """,
                 (
@@ -111,10 +126,21 @@ def save_profile(
                     photo_bytes,
                     photo_mime,
                     now,
+                    *owner_key_params,
                     profile_id,
                 ),
             )
     conn.commit()
+
+
+def hash_owner_key(owner_key: str) -> str:
+    return hashlib.sha256(owner_key.encode("utf-8")).hexdigest()
+
+
+def can_delete_profile(profile: sqlite3.Row, owner_key: str) -> bool:
+    if not profile["owner_key_hash"]:
+        return False
+    return profile["owner_key_hash"] == hash_owner_key(owner_key)
 
 
 def delete_profile(conn: sqlite3.Connection, profile_id: int) -> None:
@@ -203,6 +229,11 @@ if mode == "프로필 등록/수정":
             height=150,
         )
         contact = st.text_input("연락처/링크드인/이메일", value=to_text(selected_profile["contact"]) if selected_profile else "")
+        owner_key = st.text_input(
+            "삭제/수정 인증코드 *",
+            type="password",
+            help="본인이 올린 프로필을 삭제하거나 인증코드를 변경할 때 사용됩니다.",
+        )
         photo_file = st.file_uploader("프로필 사진 업로드 (선택)", type=["png", "jpg", "jpeg"])
 
         save_clicked = st.form_submit_button("저장")
@@ -210,6 +241,8 @@ if mode == "프로필 등록/수정":
     if save_clicked:
         if not name.strip() or not organization.strip() or not role.strip():
             st.error("이름, 소속, 직무/관심 분야는 필수 입력 항목입니다.")
+        elif selected_id is None and not owner_key.strip():
+            st.error("새 프로필 등록 시 삭제/수정 인증코드를 입력해 주세요.")
         else:
             photo_bytes = photo_file.read() if photo_file else None
             photo_mime = photo_file.type if photo_file else None
@@ -222,16 +255,24 @@ if mode == "프로필 등록/수정":
                 interests.strip(),
                 introduction.strip(),
                 contact.strip(),
+                hash_owner_key(owner_key.strip()) if owner_key.strip() else None,
                 photo_bytes,
                 photo_mime,
             )
             st.success("프로필이 저장되었습니다.")
             st.rerun()
 
-    if selected_id is not None and st.button("선택 프로필 삭제", type="secondary"):
-        delete_profile(conn, selected_id)
-        st.success("프로필이 삭제되었습니다.")
-        st.rerun()
+    if selected_id is not None:
+        delete_key = st.text_input("프로필 삭제 인증코드", type="password", key="delete_key")
+        if st.button("선택 프로필 삭제", type="secondary"):
+            if not delete_key.strip():
+                st.error("삭제 인증코드를 입력해 주세요.")
+            elif selected_profile is None or not can_delete_profile(selected_profile, delete_key.strip()):
+                st.error("인증코드가 일치하지 않아 삭제할 수 없습니다.")
+            else:
+                delete_profile(conn, selected_id)
+                st.success("본인이 등록한 프로필이 삭제되었습니다.")
+                st.rerun()
 
 st.divider()
 st.subheader("학회원 프로필")
