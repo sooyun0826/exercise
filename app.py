@@ -44,6 +44,9 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
+def to_text(value: str | None) -> str:
+    return value or ""
+
 
 def save_profile(
     conn: sqlite3.Connection,
@@ -190,16 +193,16 @@ if mode == "프로필 등록/수정":
         selected_profile = conn.execute("SELECT * FROM profiles WHERE id=?", (selected_id,)).fetchone()
 
     with st.form("profile_form", clear_on_submit=False):
-        name = st.text_input("이름 *", value=selected_profile["name"] if selected_profile else "")
-        organization = st.text_input("소속(학교/회사/팀) *", value=selected_profile["organization"] if selected_profile else "")
-        role = st.text_input("직무/관심 분야 *", value=selected_profile["role"] if selected_profile else "")
-        interests = st.text_input("관심 키워드", value=selected_profile["interests"] if selected_profile else "")
+        name = st.text_input("이름 *", value=to_text(selected_profile["name"]) if selected_profile else "")
+        organization = st.text_input("소속(학교/회사/팀) *", value=to_text(selected_profile["organization"]) if selected_profile else "")
+        role = st.text_input("직무/관심 분야 *", value=to_text(selected_profile["role"]) if selected_profile else "")
+        interests = st.text_input("관심 키워드", value=to_text(selected_profile["interests"]) if selected_profile else "")
         introduction = st.text_area(
             "자기소개",
-            value=selected_profile["introduction"] if selected_profile else "",
+            value=to_text(selected_profile["introduction"]) if selected_profile else "",
             height=150,
         )
-        contact = st.text_input("연락처/링크드인/이메일", value=selected_profile["contact"] if selected_profile else "")
+        contact = st.text_input("연락처/링크드인/이메일", value=to_text(selected_profile["contact"]) if selected_profile else "")
         photo_file = st.file_uploader("프로필 사진 업로드 (선택)", type=["png", "jpg", "jpeg"])
 
         save_clicked = st.form_submit_button("저장")
@@ -222,11 +225,13 @@ if mode == "프로필 등록/수정":
                 photo_bytes,
                 photo_mime,
             )
-            st.success("프로필이 저장되었습니다. 새로고침하면 최신 목록이 반영됩니다.")
+            st.success("프로필이 저장되었습니다.")
+            st.rerun()
 
     if selected_id is not None and st.button("선택 프로필 삭제", type="secondary"):
         delete_profile(conn, selected_id)
-        st.success("프로필이 삭제되었습니다. 새로고침하면 목록에서 사라집니다.")
+        st.success("프로필이 삭제되었습니다.")
+        st.rerun()
 
 st.divider()
 st.subheader("학회원 프로필")
@@ -267,4 +272,5 @@ else:
                     st.error("작성자와 댓글 내용을 모두 입력해 주세요.")
                 else:
                     add_comment(conn, profile["id"], author.strip(), comment_text.strip())
-                    st.success("댓글이 등록되었습니다. 새로고침하면 최신 댓글이 반영됩니다.")
+                    st.success("댓글이 등록되었습니다.")
+                    st.rerun()
