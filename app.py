@@ -1,4 +1,3 @@
-import base64
 import sqlite3
 from datetime import datetime
 
@@ -31,7 +30,22 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id INTEGER NOT NULL,
+            author TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+        )
+        """
+    )
     conn.commit()
+
+def to_text(value: str | None) -> str:
+    return value or ""
 
 
 def save_profile(
@@ -104,6 +118,7 @@ def save_profile(
 
 
 def delete_profile(conn: sqlite3.Connection, profile_id: int) -> None:
+    conn.execute("DELETE FROM comments WHERE profile_id=?", (profile_id,))
     conn.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
     conn.commit()
 
@@ -124,16 +139,26 @@ def fetch_profiles(conn: sqlite3.Connection, keyword: str = "") -> list[sqlite3.
     return cursor.fetchall()
 
 
-def render_photo(photo: bytes | None, mime: str | None) -> None:
-    if photo and mime:
-        encoded = base64.b64encode(photo).decode("utf-8")
-        st.markdown(
-            (
-                f"<img src='data:{mime};base64,{encoded}' "
-                "style='width:100%; max-height:220px; object-fit:cover; border-radius:10px;'/>"
-            ),
-            unsafe_allow_html=True,
-        )
+def add_comment(conn: sqlite3.Connection, profile_id: int, author: str, content: str) -> None:
+    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    conn.execute(
+        "INSERT INTO comments (profile_id, author, content, created_at) VALUES (?, ?, ?, ?)",
+        (profile_id, author, content, now),
+    )
+    conn.commit()
+
+
+def fetch_comments(conn: sqlite3.Connection, profile_id: int) -> list[sqlite3.Row]:
+    cursor = conn.execute(
+        "SELECT author, content, created_at FROM comments WHERE profile_id=? ORDER BY id DESC",
+        (profile_id,),
+    )
+    return cursor.fetchall()
+
+
+def render_photo(photo: bytes | None) -> None:
+    if photo:
+        st.image(photo, use_container_width=True)
     else:
         st.info("등록된 프로필 사진이 없습니다.")
 
@@ -168,16 +193,16 @@ if mode == "프로필 등록/수정":
         selected_profile = conn.execute("SELECT * FROM profiles WHERE id=?", (selected_id,)).fetchone()
 
     with st.form("profile_form", clear_on_submit=False):
-        name = st.text_input("이름 *", value=selected_profile["name"] if selected_profile else "")
-        organization = st.text_input("소속(학교/회사/팀) *", value=selected_profile["organization"] if selected_profile else "")
-        role = st.text_input("직무/관심 분야 *", value=selected_profile["role"] if selected_profile else "")
-        interests = st.text_input("관심 키워드", value=selected_profile["interests"] if selected_profile else "")
+        name = st.text_input("이름 *", value=to_text(selected_profile["name"]) if selected_profile else "")
+        organization = st.text_input("소속(학교/회사/팀) *", value=to_text(selected_profile["organization"]) if selected_profile else "")
+        role = st.text_input("직무/관심 분야 *", value=to_text(selected_profile["role"]) if selected_profile else "")
+        interests = st.text_input("관심 키워드", value=to_text(selected_profile["interests"]) if selected_profile else "")
         introduction = st.text_area(
             "자기소개",
-            value=selected_profile["introduction"] if selected_profile else "",
+            value=to_text(selected_profile["introduction"]) if selected_profile else "",
             height=150,
         )
-        contact = st.text_input("연락처/링크드인/이메일", value=selected_profile["contact"] if selected_profile else "")
+        contact = st.text_input("연락처/링크드인/이메일", value=to_text(selected_profile["contact"]) if selected_profile else "")
         photo_file = st.file_uploader("프로필 사진 업로드 (선택)", type=["png", "jpg", "jpeg"])
 
         save_clicked = st.form_submit_button("저장")
@@ -200,11 +225,13 @@ if mode == "프로필 등록/수정":
                 photo_bytes,
                 photo_mime,
             )
-            st.success("프로필이 저장되었습니다. 새로고침하면 최신 목록이 반영됩니다.")
+            st.success("프로필이 저장되었습니다.")
+            st.rerun()
 
     if selected_id is not None and st.button("선택 프로필 삭제", type="secondary"):
         delete_profile(conn, selected_id)
-        st.success("프로필이 삭제되었습니다. 새로고침하면 목록에서 사라집니다.")
+        st.success("프로필이 삭제되었습니다.")
+        st.rerun()
 
 st.divider()
 st.subheader("학회원 프로필")
@@ -217,7 +244,7 @@ else:
         with cols[idx % 3]:
             st.markdown(f"### {profile['name']}")
             st.caption(f"{profile['organization']} · {profile['role']}")
-            render_photo(profile["photo"], profile["photo_mime"])
+            render_photo(profile["photo"])
             if profile["interests"]:
                 st.write(f"**관심 키워드:** {profile['interests']}")
             if profile["introduction"]:
@@ -225,3 +252,25 @@ else:
             if profile["contact"]:
                 st.write(f"🔗 {profile['contact']}")
             st.caption(f"최근 수정: {profile['updated_at']}")
+
+            st.markdown("#### 💬 댓글")
+            comments = fetch_comments(conn, profile["id"])
+            if comments:
+                for c in comments:
+                    st.markdown(f"- **{c['author']}**: {c['content']}")
+                    st.caption(f"작성: {c['created_at']}")
+            else:
+                st.caption("아직 댓글이 없습니다. 첫 댓글을 남겨보세요!")
+
+            with st.form(f"comment_form_{profile['id']}", clear_on_submit=True):
+                author = st.text_input("작성자", key=f"author_{profile['id']}")
+                comment_text = st.text_area("댓글 내용", key=f"content_{profile['id']}", height=80)
+                comment_submitted = st.form_submit_button("댓글 등록")
+
+            if comment_submitted:
+                if not author.strip() or not comment_text.strip():
+                    st.error("작성자와 댓글 내용을 모두 입력해 주세요.")
+                else:
+                    add_comment(conn, profile["id"], author.strip(), comment_text.strip())
+                    st.success("댓글이 등록되었습니다.")
+                    st.rerun()
