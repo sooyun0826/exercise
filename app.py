@@ -243,6 +243,10 @@ if mode == "프로필 등록/수정":
             st.error("이름, 소속, 직무/관심 분야는 필수 입력 항목입니다.")
         elif selected_id is None and not owner_key.strip():
             st.error("새 프로필 등록 시 삭제/수정 인증코드를 입력해 주세요.")
+        elif selected_id is not None and (
+            selected_profile is None or not owner_key.strip() or not can_delete_profile(selected_profile, owner_key.strip())
+        ):
+            st.error("프로필 수정 인증코드가 일치하지 않아 수정할 수 없습니다.")
         else:
             photo_bytes = photo_file.read() if photo_file else None
             photo_mime = photo_file.type if photo_file else None
@@ -255,7 +259,7 @@ if mode == "프로필 등록/수정":
                 interests.strip(),
                 introduction.strip(),
                 contact.strip(),
-                hash_owner_key(owner_key.strip()) if owner_key.strip() else None,
+                hash_owner_key(owner_key.strip()) if selected_id is None else None,
                 photo_bytes,
                 photo_mime,
             )
