@@ -217,6 +217,9 @@ if mode == "프로필 등록/수정":
     selected_profile = None
     if selected_id is not None:
         selected_profile = conn.execute("SELECT * FROM profiles WHERE id=?", (selected_id,)).fetchone()
+    owner_key_widget_key = f"owner_key_{selected_id if selected_id is not None else 'new'}"
+    photo_widget_key = f"photo_file_{selected_id if selected_id is not None else 'new'}"
+    delete_key_widget_key = f"delete_key_{selected_id if selected_id is not None else 'none'}"
 
     with st.form("profile_form", clear_on_submit=False):
         name = st.text_input("이름 *", value=to_text(selected_profile["name"]) if selected_profile else "")
@@ -233,8 +236,13 @@ if mode == "프로필 등록/수정":
             "삭제/수정 인증코드 *",
             type="password",
             help="본인이 올린 프로필을 삭제하거나 인증코드를 변경할 때 사용됩니다.",
+            key=owner_key_widget_key,
         )
-        photo_file = st.file_uploader("프로필 사진 업로드 (선택)", type=["png", "jpg", "jpeg"])
+        photo_file = st.file_uploader(
+            "프로필 사진 업로드 (선택)",
+            type=["png", "jpg", "jpeg"],
+            key=photo_widget_key,
+        )
 
         save_clicked = st.form_submit_button("저장")
 
@@ -267,7 +275,7 @@ if mode == "프로필 등록/수정":
             st.rerun()
 
     if selected_id is not None:
-        delete_key = st.text_input("프로필 삭제 인증코드", type="password", key="delete_key")
+        delete_key = st.text_input("프로필 삭제 인증코드", type="password", key=delete_key_widget_key)
         if st.button("선택 프로필 삭제", type="secondary"):
             if not delete_key.strip():
                 st.error("삭제 인증코드를 입력해 주세요.")
